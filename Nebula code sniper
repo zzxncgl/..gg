@@ -1,0 +1,819 @@
+--[[ ============================================================
+     NEBULA CODE SNIPER  -  para Delta (Roblox)
+     - Escucha los anuncios del juego y canjea los codigos solo
+     - Acertijos resueltos con IA
+     - Code remember: pega TODO lo que dice el anuncio
+     - Selector de 1 a 5 palabras antes de enviar
+     ============================================================ ]]
+
+local cloneref = cloneref or function(o) return o end
+local Players           = cloneref(game:GetService("Players"))
+local ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage"))
+local RunService        = cloneref(game:GetService("RunService"))
+local UserInputService  = cloneref(game:GetService("UserInputService"))
+local HttpService       = cloneref(game:GetService("HttpService"))
+local player    = Players.LocalPlayer
+local playerGui = player:WaitForChild("PlayerGui")
+
+if getgenv and getgenv().StopNebulaCodeSniper then
+    pcall(getgenv().StopNebulaCodeSniper)
+end
+
+-- ================== CONFIGURACION ==================
+local CFG = {
+    GuiName    = "NebulaCodeSniperUI",
+    ConfigFile = "nebula_code_sniper_config.json",
+
+    -- Donde aparece la ventana (cambialo si quieres moverla de sitio)
+    WindowAnchor   = Vector2.new(0, 0.5),
+    WindowPosition = UDim2.new(0, 10, 0.5, 0),
+
+    MinWords = 1,
+    MaxWords = 5,
+
+    AI = {
+        -- Servidor de acertijos (el mismo del script original)
+        WorkerURL   = "https://sab-riddle-solver.xyrcheatz.workers.dev",
+        WorkerToken = "0facce8d7ac3a4b6fc4b6ae068b3b219883009780cb2ca31",
+        WorkerModel = "qwen",
+
+        -- OPCIONAL: si pones tu clave de Anthropic aqui, usa Claude en vez del servidor de arriba
+        AnthropicKey   = "",
+        AnthropicModel = "claude-haiku-5-5",
+        SystemPrompt   = "You help solve riddles that unlock in-game codes. If the text is a riddle or puzzle, reply ONLY with the answer: a single word or number, no punctuation, no explanation. If the text is not a riddle, reply exactly: NOT_RIDDLE",
+    },
+}
+
+local COLORS = {
+    Window  = Color3.fromRGB(8, 5, 16),
+    Window2 = Color3.fromRGB(30, 12, 62),
+    Row     = Color3.fromRGB(20, 12, 40),
+    Control = Color3.fromRGB(44, 30, 76),
+    Log     = Color3.fromRGB(9, 6, 18),
+    Violet  = Color3.fromRGB(150, 80, 255),
+    Blue    = Color3.fromRGB(70, 140, 255),
+    White   = Color3.fromRGB(240, 232, 255),
+    Text    = Color3.fromRGB(196, 176, 240),
+    Dim     = Color3.fromRGB(128, 116, 165),
+    Accent  = Color3.fromRGB(140, 70, 255),
+    Green   = Color3.fromRGB(110, 230, 165),
+    Red     = Color3.fromRGB(255, 105, 140),
+}
+
+local RICH = {
+    Dim    = "rgb(128,116,165)",
+    Violet = "rgb(180,130,255)",
+    Green  = "rgb(110,230,165)",
+    Red    = "rgb(255,105,140)",
+    Blue   = "rgb(110,170,255)",
+}
+
+-- ================== AJUSTES GUARDADOS ==================
+local saved = {
+    sniper     = true,
+    autoSubmit = true,
+    words      = 3,
+    retype     = false,
+    riddle     = true,
+    remember   = false,
+}
+pcall(function()
+    _lastStatusMsg, _lastStatusTime = msg, tick()
+    pushLine(colored(escRich(msg), col3ToRich(col or COLORS.Dim)))
+end
+
+local function flashCode(code, col)
+    if not code or code == "" then return end
+    setStatus("[codigo] -> " .. tostring(code), col or COLORS.White)
+end
+
+-- ---------- cabecera ----------
+local BrandMark = Instance.new("Frame")
+BrandMark.Size = UDim2.fromOffset(30, 30)
+BrandMark.Position = UDim2.fromOffset(17, 15)
+BrandMark.BackgroundColor3 = Color3.new(1, 1, 1)
+BrandMark.BorderSizePixel = 0
+BrandMark.Parent = Header
+addCorner(BrandMark, 15)
+local brandGrad = Instance.new("UIGradient")
+brandGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, COLORS.Violet),
+    ColorSequenceKeypoint.new(1, COLORS.Blue),
+})
+brandGrad.Rotation = 45
+brandGrad.Parent = BrandMark
+local brandLetter = makeLabel(BrandMark, "N", "N", UDim2.fromScale(1, 1), UDim2.fromOffset(0, 0), 17, COLORS.White, Enum.Font.GothamBlack)
+brandLetter.TextXAlignment = Enum.TextXAlignment.Center
+
+local Title = makeLabel(Header, "Title", "NEBULA CODE SNIPER", UDim2.fromOffset(190, 25), UDim2.fromOffset(56, 17), 15, COLORS.White, Enum.Font.GothamBold)
+local titleGrad = Instance.new("UIGradient")
+titleGrad.Color = ColorSequence.new({
+    ColorSequenceKeypoint.new(0, COLORS.Violet),
+    ColorSequenceKeypoint.new(1, COLORS.Blue),
+})
+titleGrad.Parent = Title
+
+local MainToggle = Instance.new("TextButton")
+MainToggle.Name = "MainToggle"
+MainToggle.Size = UDim2.fromOffset(47, 24)
+MainToggle.Position = UDim2.new(1, -64, 0, 18)
+MainToggle.BorderSizePixel = 0
+MainToggle.AutoButtonColor = false
+MainToggle.Active = true
+MainToggle.Text = ""
+MainToggle.ZIndex = 5
+MainToggle.Parent = Header
+addCorner(MainToggle, 12)
+local MainStroke = addStroke(MainToggle, COLORS.White, 1, 0.62)
+local MainKnob = Instance.new("Frame")
+MainKnob.Size = UDim2.fromOffset(20, 20)
+MainKnob.BorderSizePixel = 0
+MainKnob.ZIndex = 6
+MainKnob.Parent = MainToggle
+addCorner(MainKnob, 10)
+
+local function applyMainVisual()
+    MainToggle.BackgroundColor3 = _enabled and COLORS.Accent or COLORS.Control
+    MainStroke.Transparency = _enabled and 0.62 or 0.88
+    MainKnob.BackgroundColor3 = COLORS.White
+    MainKnob.Position = _enabled and UDim2.new(1, -22, 0.5, -10) or UDim2.new(0, 2, 0.5, -10)
+end
+applyMainVisual()
+
+local function showHeaderLines()
+    if _enabled then
+        consoleLines = { colored("&gt;", RICH.Violet) .. " " .. colored("escaneando anuncios...", RICH.Dim) }
+        for _, name in ipairs({ "Auto enviar", "Acertijos IA", "Code remember", "Reintentar invalido" }) do
+            if featureOn[name] then appendConsoleStatus(name, true) end
+        end
+    else
+        consoleLines = {
+            colored("estado:", RICH.Dim) .. " " .. colored("OFF", RICH.Red),
+            colored("sniper en pausa", RICH.Dim),
+        }
+    end
+    renderConsole()
+end
+
+bindPress(MainToggle, function()
+    _enabled = not _enabled
+    if not _enabled then resetCapture() end
+    saved.sniper = _enabled
+    saveConfig()
+    _lastStatusMsg = nil
+    applyMainVisual()
+    showHeaderLines()
+end)
+
+local Divider = Instance.new("Frame")
+Divider.Size = UDim2.new(1, -34, 0, 1)
+Divider.Position = UDim2.fromOffset(17, 54)
+Divider.BackgroundColor3 = COLORS.Violet
+Divider.BackgroundTransparency = 0.5
+Divider.BorderSizePixel = 0
+Divider.Parent = Header
+
+-- ---------- ajustes ----------
+local Settings = Instance.new("Frame")
+Settings.Name = "Settings"
+Settings.Size = UDim2.new(1, 0, 0, 160)
+Settings.Position = UDim2.fromOffset(0, 65)
+Settings.BackgroundTransparency = 1
+Settings.ZIndex = 3
+Settings.Parent = Window
+
+local function makeCard(name, position, size)
+    local card = Instance.new("Frame")
+    card.Name = name
+    card.Position = position
+    card.Size = size
+    card.BackgroundColor3 = COLORS.Row
+    card.BackgroundTransparency = 0.2
+    card.BorderSizePixel = 0
+    card.Parent = Settings
+    addCorner(card, 9)
+    addStroke(card, COLORS.Violet, 1, 0.65)
+    return card
+end
+
+local function makeSwitchCard(name, label, position, initial, onToggle)
+    local card = makeCard(name, position, UDim2.fromOffset(135, 50))
+    local l = makeLabel(card, "Title", label, UDim2.new(1, -58, 1, 0), UDim2.fromOffset(12, 0), 11, COLORS.White, Enum.Font.GothamMedium)
+    l.TextWrapped = true
+
+    featureOn[label] = initial
+    local button = Instance.new("TextButton")
+    button.Name = "State"
+    button.Size = UDim2.fromOffset(42, 20)
+    button.Position = UDim2.new(1, -50, 0.5, -10)
+    button.BorderSizePixel = 0
+    button.AutoButtonColor = false
+    button.Active = true
+    button.TextSize = 10
+    button.Font = Enum.Font.GothamBold
+    button.ZIndex = 5
+    button.Parent = card
+    addCorner(button, 6)
+    local outline = addStroke(button, COLORS.White, 1, 0.8)
+
+    local state = initial
+    local function paint()
+        button.Text = state and "ON" or "OFF"
+        button.BackgroundColor3 = state and COLORS.Accent or COLORS.Control
+        button.TextColor3 = state and COLORS.White or COLORS.Dim
+        outline.Transparency = state and 0.62 or 0.88
+    end
+    paint()
+
+    bindPress(button, function()
+        state = not state
+        featureOn[label] = state
+        paint()
+        if _enabled then appendConsoleStatus(label, state) end
+        onToggle(state)
+    end)
+    return card
+end
+
+makeSwitchCard("AutoSubmit", "Auto enviar", UDim2.fromOffset(17, 0), _autoSubmit, function(s)
+    _autoSubmit = s
+    saved.autoSubmit = s
+    saveConfig()
+end)
+
+makeSwitchCard("Riddles", "Acertijos IA", UDim2.fromOffset(158, 0), _riddle, function(s)
+    _riddle = s
+    saved.riddle = s
+    saveConfig()
+end)
+
+makeSwitchCard("Remember", "Code remember", UDim2.fromOffset(17, 57), _remember, function(s)
+    _remember = s
+    saved.remember = s
+    resetCapture()
+    saveConfig()
+end)
+
+makeSwitchCard("Retype", "Reintentar invalido", UDim2.fromOffset(158, 57), _retype, function(s)
+    _retype = s
+    saved.retype = s
+    saveConfig()
+end)
+
+-- selector de palabras 1-5
+local WordsCard = makeCard("Words", UDim2.fromOffset(17, 114), UDim2.fromOffset(276, 43))
+local wl = makeLabel(WordsCard, "Title", "Palabras antes de enviar (1-5)", UDim2.fromOffset(160, 43), UDim2.fromOffset(12, 0), 11, COLORS.White, Enum.Font.GothamMedium)
+wl.TextWrapped = true
+
+local CounterShell = Instance.new("Frame")
+CounterShell.Size = UDim2.fromOffset(96, 31)
+CounterShell.Position = UDim2.new(1, -105, 0.5, -15)
+CounterShell.BackgroundColor3 = COLORS.Window
+CounterShell.BackgroundTransparency = 0.05
+CounterShell.BorderSizePixel = 0
+CounterShell.Parent = WordsCard
+addCorner(CounterShell, 7)
+addStroke(CounterShell, COLORS.Violet, 1, 0.7)
+
+local function makeStep(name, text, x)
+    local b = Instance.new("TextButton")
+    b.Name = name
+    b.Size = UDim2.fromOffset(25, 25)
+    b.Position = UDim2.fromOffset(x, 3)
+    b.BackgroundColor3 = COLORS.Control
+    b.BorderSizePixel = 0
+    b.AutoButtonColor = false
+    b.Active = true
+    b.Text = text
+    b.TextSize = 16
+    b.TextColor3 = COLORS.Text
+    b.Font = Enum.Font.GothamBold
+    b.Parent = CounterShell
+    addCorner(b, 5)
+    return b
+end
+
+local Minus = makeStep("Minus", "-", 3)
+local Count = makeLabel(CounterShell, "Count", tostring(_words), UDim2.fromOffset(28, 25), UDim2.fromOffset(34, 3), 17, COLORS.White, Enum.Font.GothamBold)
+Count.TextXAlignment = Enum.TextXAlignment.Center
+local Plus = makeStep("Plus", "+", 68)
+
+local function setWords(n)
+    _words = math.clamp(n, CFG.MinWords, CFG.MaxWords)
+    Count.Text = tostring(_words)
+    saved.words = _words
+    resetCapture()
+    saveConfig()
+end
+bindPress(Minus, function() setWords(_words - 1) end)
+bindPress(Plus, function() setWords(_words + 1) end)
+
+-- ---------- consola visual ----------
+Console = Instance.new("ScrollingFrame")
+Console.Name = "Console"
+Console.Size = UDim2.new(1, -34, 0, 134)
+Console.Position = UDim2.fromOffset(17, 232)
+Console.BackgroundColor3 = COLORS.Log
+Console.BorderSizePixel = 0
+Console.ClipsDescendants = true
+Console.Active = true
+Console.ScrollingDirection = Enum.ScrollingDirection.Y
+Console.ElasticBehavior = Enum.ElasticBehavior.WhenScrollable
+Console.CanvasSize = UDim2.new(0, 0, 0, 0)
+Console.AutomaticCanvasSize = Enum.AutomaticSize.Y
+Console.ScrollBarThickness = 4
+Console.ScrollBarImageColor3 = COLORS.Violet
+Console.ZIndex = 3
+Console.Parent = Window
+addCorner(Console, 9)
+addStroke(Console, COLORS.Violet, 1, 0.7)
+
+ConsoleOutput = Instance.new("TextLabel")
+ConsoleOutput.Name = "ConsoleOutput"
+ConsoleOutput.Size = UDim2.new(1, -18, 0, 0)
+ConsoleOutput.AutomaticSize = Enum.AutomaticSize.Y
+ConsoleOutput.Position = UDim2.fromOffset(9, 6)
+ConsoleOutput.BackgroundTransparency = 1
+ConsoleOutput.RichText = true
+ConsoleOutput.Text = ""
+ConsoleOutput.TextSize = 13
+ConsoleOutput.Font = Enum.Font.Code
+ConsoleOutput.TextColor3 = COLORS.Dim
+ConsoleOutput.TextXAlignment = Enum.TextXAlignment.Left
+ConsoleOutput.TextYAlignment = Enum.TextYAlignment.Top
+ConsoleOutput.TextWrapped = true
+ConsoleOutput.ZIndex = 4
+ConsoleOutput.Parent = Console
+
+local consolePad = Instance.new("UIPadding")
+consolePad.PaddingBottom = UDim.new(0, 10)
+consolePad.Parent = ConsoleOutput
+
+showHeaderLines()
+
+-- ---------- arrastrar la ventana (mouse y tactil) ----------
+do
+    local dragging = false
+    local activeDragInput, dragStart, startPosition
+    local dragMoved = false
+    local DRAG_THRESHOLD = UserInputService.TouchEnabled and 10 or 3
+
+    local function isOverToggle(pos)
+        local p, s = MainToggle.AbsolutePosition, MainToggle.AbsoluteSize
+        return pos.X >= p.X - 10 and pos.X <= p.X + s.X + 10
+            and pos.Y >= p.Y - 10 and pos.Y <= p.Y + s.Y + 10
+    end
+
+    local function stopDragging(input)
+        if input ~= activeDragInput then return end
+        dragging = false
+        activeDragInput, dragStart, startPosition = nil, nil, nil
+    end
+
+    Header.InputBegan:Connect(function(input)
+        if input.UserInputType ~= Enum.UserInputType.MouseButton1
+            and input.UserInputType ~= Enum.UserInputType.Touch then return end
+        if dragging or isOverToggle(input.Position) then return end
+        dragging = true
+        activeDragInput = input
+        dragStart = Vector2.new(input.Position.X, input.Position.Y)
+        startPosition = Window.Position
+        dragMoved = false
+        input.Changed:Connect(function()
+            if input.UserInputState == Enum.UserInputState.End
+                or input.UserInputState == Enum.UserInputState.Cancel then
+                stopDragging(input)
+            end
+        end)
+    end)
+
+    track(UserInputService.InputChanged:Connect(function(input)
+        if not dragging or not activeDragInput then return end
+        local okTouch = activeDragInput.UserInputType == Enum.UserInputType.Touch and input == activeDragInput
+        local okMouse = activeDragInput.UserInputType == Enum.UserInputType.MouseButton1
+            and input.UserInputType == Enum.UserInputType.MouseMovement
+        if not okTouch and not okMouse then return end
+        local delta = Vector2.new(input.Position.X, input.Position.Y) - dragStart
+        if not dragMoved then
+            if delta.Magnitude < DRAG_THRESHOLD then return end
+            dragMoved = true
+        end
+        Window.Position = UDim2.new(
+            startPosition.X.Scale, startPosition.X.Offset + delta.X,
+            startPosition.Y.Scale, startPosition.Y.Offset + delta.Y
+        )
+    end))
+end
+
+-- ================== VIGILAR LA CAJA DE CODIGOS ==================
+local _lastWatchedBox, _boxTextConn, _boxAncestryConn
+local _lastNonBlankBoxText = ""
+
+local function clearBoxWatchers()
+    if _boxTextConn then pcall(function() _boxTextConn:Disconnect() end) end
+    if _boxAncestryConn then pcall(function() _boxAncestryConn:Disconnect() end) end
+    _boxTextConn, _boxAncestryConn, _lastWatchedBox = nil, nil, nil
+end
+
+local function watchBoxForBlankReset(box)
+    if not box or _lastWatchedBox == box then return end
+    clearBoxWatchers()
+    _lastWatchedBox = box
+    if box.Text ~= "" then _lastNonBlankBoxText = box.Text end
+    _boxTextConn = box:GetPropertyChangedSignal("Text"):Connect(function()
+        if box.Text == "" then resetCapture() else _lastNonBlankBoxText = box.Text end
+    end)
+    _boxAncestryConn = box.AncestryChanged:Connect(function(_, parent)
+        if not parent then resetCapture() clearBoxWatchers() end
+    end)
+end
+
+-- ================== REINTENTAR INVALIDO ==================
+local _pendingText, _pendingBox, _pendingUntil, _pendingToken = nil, nil, 0, 0
+local feedbackConns = {}
+
+local function stopFeedbackWatch()
+    for _, c in ipairs(feedbackConns) do pcall(function() c:Disconnect() end) end
+    feedbackConns = {}
+end
+
+local function clearPendingSubmission()
+    _pendingToken = _pendingToken + 1
+    _pendingText, _pendingBox, _pendingUntil = nil, nil, 0
+    stopFeedbackWatch()
+end
+
+local function restoreRejectedText(box, previousText)
+    if not _retype or not previousText or previousText == "" then return false end
+    RunService.Heartbeat:Wait()
+    local target = findCodeBox() or box
+    if not target or not isVisibleChain(target) then return false end
+    local ok = pcall(function() target.Text = previousText end)
+    if ok then
+        _lastBox = target
+        watchBoxForBlankReset(target)
+    end
+    return ok
+end
+
+local REJECT_WORDS = {
+    "invalid code", "code is invalid", "invalid", "expired", "already redeemed",
+    "already used", "doesn't exist", "does not exist", "not found", "rejected",
+    "invalido", "expirado", "ya canjeado",
+}
+
+local function handleRedemptionFeedback(text, obj)
+    if not _retype or not _pendingText then return end
+    if os.clock() > _pendingUntil then clearPendingSubmission() return end
+    if obj and isOurGui(obj) then return end
+    local lower = tostring(text or ""):lower()
+    local rejected = false
+    for _, w in ipairs(REJECT_WORDS) do
+        if lower:find(w, 1, true) then rejected = true break end
+    end
+    if not rejected then return end
+    local prevText, prevBox = _pendingText, _pendingBox
+    local restored = restoreRejectedText(prevBox, prevText)
+    clearPendingSubmission()
+    if restored then
+        setStatus("Invalido - repegado: " .. prevText, COLORS.Text)
+        flashCode(prevText, COLORS.Red)
+    end
+end
+
+local function watchFeedbackObject(obj, handleNow)
+    if not (obj:IsA("TextLabel") or obj:IsA("TextButton")) or isOurGui(obj) then return end
+    if handleNow then handleRedemptionFeedback(obj.Text or "", obj) end
+    feedbackConns[#feedbackConns + 1] = obj:GetPropertyChangedSignal("Text"):Connect(function()
+        handleRedemptionFeedback(obj.Text or "", obj)
+    end)
+end
+
+local function startFeedbackWatch()
+    stopFeedbackWatch()
+    for _, o in ipairs(playerGui:GetDescendants()) do watchFeedbackObject(o, false) end
+    feedbackConns[#feedbackConns + 1] = playerGui.DescendantAdded:Connect(function(o)
+        task.wait(0.04)
+        watchFeedbackObject(o, true)
+    end)
+end
+
+local function rememberPendingSubmission(box, text, replaceExisting)
+    if not _retype or not text or text == "" then return end
+    if not replaceExisting and _pendingText and os.clock() <= _pendingUntil then return end
+    _pendingToken = _pendingToken + 1
+    local token = _pendingToken
+    _pendingText, _pendingBox, _pendingUntil = text, box, os.clock() + 8
+    startFeedbackWatch()
+    task.delay(8, function()
+        if token == _pendingToken then clearPendingSubmission() end
+    end)
+end
+
+track(UserInputService.TextBoxFocused:Connect(function(box)
+    if isOurGui(box) then return end
+    if box ~= findCodeBox() then return end
+    _lastBox = box
+    watchBoxForBlankReset(box)
+    if _enabled then setStatus("Listo", COLORS.Green) end
+end))
+
+track(UserInputService.TextBoxFocusReleased:Connect(function(box)
+    if isOurGui(box) then return end
+    local codeBox = findCodeBox()
+    if box ~= codeBox and box ~= _lastBox then return end
+    if _retype then
+        local submitted = box.Text ~= "" and box.Text or _lastNonBlankBoxText
+        rememberPendingSubmission(box, submitted, false)
+    end
+end))
+
+-- ================== CAPTURA DE PALABRAS Y ENVIO ==================
+local submitNow, deliverCode, pushWord
+
+local function combineParts(parts)
+    for _, p in ipairs(parts) do
+        if p:find("%s") then return table.concat(parts, " ") end
+    end
+    return table.concat(parts)
+end
+
+local function appendToBox(word)
+    if not word or word == "" then return end
+    if _lastWatchedBox and not isVisibleChain(_lastWatchedBox) then
+        resetCapture()
+        clearBoxWatchers()
+    end
+    capturedParts[#capturedParts + 1] = word
+    local combined = combineParts(capturedParts)
+    local count = #capturedParts
+
+    local box = findCodeBox()
+    if box then
+        _lastBox = box
+        watchBoxForBlankReset(box)
+        local wasFocused = UserInputService:GetFocusedTextBox() == box
+        pcall(function() box.Text = combined end)
+        if wasFocused then
+            pcall(function()
+                box.CursorPosition = #combined + 1
+                box.SelectionStart = #combined + 1
+            end)
+        end
+    else
+        setStatus("Capturado; abriendo el menu de codigos...", COLORS.Text)
+    end
+
+    setStatus("Palabra " .. count .. "/" .. _words, COLORS.Green)
+    flashCode(combined, COLORS.Green)
+
+    if count >= _words then
+        capturedParts = {}
+        if _autoSubmit then submitNow(box, combined) end
+    end
+end
+
+pushWord = function(word)
+    word = trim(word)
+    if word == "" or _seen[word] then return end
+    _seen[word] = true
+    task.delay(1.25, function() _seen[word] = nil end)
+    appendToBox(word)
+end
+
+submitNow = function(box, code)
+    rememberPendingSubmission(box, code, true)
+    local ok, msg = typeAndSubmitCode(code)
+    if ok then
+        setStatus("Enviado: " .. code, COLORS.Green)
+    else
+        local restored = restoreRejectedText(box, code)
+        clearPendingSubmission()
+        if restored then
+            setStatus("No se pudo enviar - repegado: " .. code, COLORS.Text)
+            flashCode(code, COLORS.Red)
+        else
+            setStatus("Fallo: " .. tostring(msg), COLORS.Red)
+        end
+    end
+end
+
+-- Respuesta lista (acertijo): se pega entera y se envia segun "Auto enviar"
+deliverCode = function(code)
+    local box = findCodeBox()
+    if box then
+        _lastBox = box
+        pasteText(box, code)
+    end
+    flashCode(code, COLORS.Green)
+    if _autoSubmit then
+        submitNow(box, code)
+    else
+        setStatus("Pegado (auto enviar OFF): " .. code, COLORS.Text)
+    end
+end
+
+-- ================== IA PARA ACERTIJOS ==================
+local httpRequest = (syn and syn.request) or (http and http.request) or request or http_request
+
+local function httpPost(url, headers, bodyTable)
+    if not httpRequest then return nil, "tu ejecutor no tiene request" end
+    local ok, res = pcall(httpRequest, {
+        Url = url,
+        Method = "POST",
+        Headers = headers,
+        Body = HttpService:JSONEncode(bodyTable),
+    })
+    if not ok or type(res) ~= "table" then return nil, "sin respuesta del servidor" end
+    local raw = res.Body or res.body
+    if type(raw) ~= "string" then return nil, "respuesta vacia" end
+    local okd, data = pcall(function() return HttpService:JSONDecode(raw) end)
+    if okd and type(data) == "table" then return data end
+    return nil, "respuesta invalida"
+end
+
+local function cleanAnswer(s)
+    s = trim(s)
+    s = (s:gsub("^[%p%s]+", ""))
+    s = (s:gsub("[%p%s]+$", ""))
+    return s
+end
+
+-- devuelve: respuesta, esAcertijo, error
+local function aiSolve(message)
+    local A = CFG.AI
+    if A.AnthropicKey ~= "" then
+        local data, err = httpPost("https://api.anthropic.com/v1/messages", {
+            ["Content-Type"] = "application/json",
+            ["x-api-key"] = A.AnthropicKey,
+            ["anthropic-version"] = "2023-06-01",
+        }, {
+            model = A.AnthropicModel,
+            max_tokens = 60,
+            system = A.SystemPrompt,
+            messages = { { role = "user", content = message } },
+        })
+        if not data then return nil, false, err end
+        local text = data.content and data.content[1] and data.content[1].text
+        if type(text) ~= "string" then return nil, false, "la IA no respondio" end
+        if text:upper():find("NOT_RIDDLE", 1, true) then return nil, false end
+        local ans = cleanAnswer(text)
+        if ans == "" then return nil, true end
+        return ans, true
+    end
+
+    local data, err = httpPost(A.WorkerURL .. "/solve", {
+        ["Content-Type"] = "application/json",
+        ["Authorization"] = "Bearer " .. A.WorkerToken,
+    }, { message = message, model = A.WorkerModel, history = {} })
+    if not data then return nil, false, err end
+    if data.riddle ~= true then return nil, false end
+    local first = type(data.answers) == "table" and data.answers[1] or ""
+    local ans = cleanAnswer(first)
+    if ans == "" then return nil, true end
+    return ans, true
+end
+
+local function solveRiddle(message, seq)
+    _solving = _solving + 1
+    setStatus("IA resolviendo acertijo...", COLORS.Text)
+    task.spawn(function()
+        local ans, isRiddle, err = aiSolve(message)
+        _solving = math.max(0, _solving - 1)
+        if not running or not _enabled then return end
+        if ans and _riddle then
+            if seq < _lastAnswered then return end -- ya se respondio uno mas nuevo
+            _lastAnswered = seq
+            setStatus("Respuesta IA: " .. ans, COLORS.Green)
+            deliverCode(ans)
+        elseif _remember then
+            -- no era acertijo (o la IA fallo): con Code remember se pega todo lo que dice
+            pushWord(message)
+        else
+            setStatus(err and ("IA: " .. err) or "IA: sin respuesta", COLORS.Red)
+        end
+    end)
+end
+
+-- ================== ANUNCIOS ==================
+-- Saca el texto del primer argumento (acepta texto, numeros y tablas)
+local function argText(v, depth)
+    local t = typeof(v)
+    if t == "string" then return v end
+    if t == "number" then return tostring(v) end
+    if t == "table" and depth < 3 then
+        for _, k in ipairs({ "Text", "text", "Message", "message", "Content", "content", "Title", "title", "Body", "body" }) do
+            local x = v[k]
+            if type(x) == "string" or type(x) == "number" then return tostring(x) end
+        end
+        for _, x in ipairs(v) do
+            local s = argText(x, depth + 1)
+            if s ~= "" then return s end
+        end
+    end
+    return ""
+end
+
+local function extractText(...)
+    for i = 1, select("#", ...) do
+        local s = argText((select(i, ...)), 0)
+        if trim(s) ~= "" then return s end
+    end
+    return ""
+end
+
+local function onAnnouncement(...)
+    local text = trim(stripRich(extractText(...)))
+    if text == "" then return end
+
+    if text:find("%s") then
+        -- varias palabras: acertijo (IA) o texto completo (Code remember)
+        if _riddle then
+            _riddleSeq = _riddleSeq + 1
+            solveRiddle(text, _riddleSeq)
+        elseif _remember then
+            pushWord(text)
+        end
+        return
+    end
+
+    -- una sola palabra, letra o numero: cuenta como una palabra
+    local token = text:gsub("^[^%w]+", "")
+    token = token:gsub("[^%w]+$", "")
+    if token == "" then return end
+    pushWord(token)
+end
+
+local function sourceLooksLikeNotifications(fn)
+    local getinfo = debug and debug.getinfo
+    if getinfo then
+        local ok, info = pcall(getinfo, fn)
+        if ok and type(info) == "table" then
+            if tostring(info.short_src or info.source or ""):find("NotificationController", 1, true) then
+                return true
+            end
+        end
+    end
+    local okEnv, env = pcall(getfenv, fn)
+    if okEnv and type(env) == "table" then
+        local okS, scr = pcall(function() return rawget(env, "script") end)
+        if okS and typeof(scr) == "Instance" and scr.Name:find("NotificationController", 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function resolveNotifyRemote()
+    if _G.PhiNotifyRemote then return _G.PhiNotifyRemote end
+    local Packages = ReplicatedStorage:WaitForChild("Packages", 3)
+    local Net = Packages and Packages:WaitForChild("Net", 3)
+    if not Net or typeof(getconns) ~= "function" then return nil end
+    for _, d in ipairs(Net:GetDescendants()) do
+        if d:IsA("RemoteEvent") then
+            local ok, cs = pcall(getconns, d.OnClientEvent)
+            if ok and type(cs) == "table" then
+                for _, c in ipairs(cs) do
+                    local f, fn = pcall(function() return c.Function end)
+                    if f and type(fn) == "function" and sourceLooksLikeNotifications(fn) then
+                        return d
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local listenConn
+task.spawn(function()
+    local remote
+    for attempt = 1, 12 do
+        if not running then return end
+        remote = resolveNotifyRemote()
+        if remote then break end
+        if attempt == 1 then setStatus("Buscando el remoto de anuncios...", COLORS.Dim) end
+        task.wait(5)
+    end
+    if not remote then
+        setStatus("No encontre el remoto de anuncios. Define _G.PhiNotifyRemote y vuelve a ejecutar.", COLORS.Red)
+        return
+    end
+    listenConn = remote.OnClientEvent:Connect(function(...)
+        if not _enabled then return end
+        pcall(onAnnouncement, ...)
+    end)
+    setStatus("Escuchando anuncios", COLORS.Green)
+end)
+
+if getgenv then
+    getgenv().StopNebulaCodeSniper = function()
+        running = false
+        if listenConn then pcall(function() listenConn:Disconnect() end) listenConn = nil end
+        clearBoxWatchers()
+        stopFeedbackWatch()
+        for _, c in ipairs(globalConns) do pcall(function() c:Disconnect() end) end
+        if viewportConnection then pcall(function() viewportConnection:Disconnect() end) end
+        if GUI then GUI:Destroy() end
+    end
+end
